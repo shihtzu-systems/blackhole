@@ -145,7 +145,7 @@ export const albIamPolicyArn = albIamPolicy.arn;
 
 // External DNS
 const dnsName = "external-dns";
-const dnsImage = "registry.opensource.zalan.do/teapot/external-dns:latest"
+const dnsImage = "registry.opensource.zalan.do/teapot/external-dns:latest";
 const dnsLabels = {
     "app.kubernetes.io/name": dnsName
 };
@@ -475,3 +475,34 @@ const dnsDeployment = new kubernetes.apps.v1.Deployment(dnsName, {
     }
 }, {provider: cluster.provider});
 
+
+// Networking
+
+const mainIngress = new kubernetes.networking.v1beta1.Ingress("main", {
+    metadata: {
+        name: "main",
+        annotations: {
+            "kubernetes.io/ingress.class": "alb",
+            "alb.ingress.kubernetes.io/scheme": "internet-facing",
+            "alb.ingress.kubernetes.io/tags": `Environment=${clusterName}`,
+        }
+    },
+    spec: {
+        rules: [
+            {
+                host: "bright.shihtzu.io",
+                http: {
+                    paths: [
+                        {
+                            path: "/*",
+                            backend: {
+                                serviceName: "bright",
+                                servicePort: "http"
+                            }
+                        }
+                    ]
+                }
+            },
+        ]
+    }
+});
