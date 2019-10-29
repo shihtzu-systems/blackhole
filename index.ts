@@ -1,3 +1,4 @@
+import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
 import * as awsx from "@pulumi/awsx";
 import * as eks from "@pulumi/eks";
@@ -7,7 +8,10 @@ import * as kubernetes from "@pulumi/kubernetes";
 const clusterName = "blackhole";
 const clusterDomain = "shihtzu.io";
 
-const includeClusterFoundation = true;
+
+const config = new pulumi.Config();
+
+const shihtzuCertArn = config.require("shihtzu-cert-arn");
 
 // AWS ALB Ingress Controller
 const albName = "alb-ingress-controller";
@@ -521,21 +525,38 @@ const dnsDeployment = new kubernetes.apps.v1.Deployment(dnsName, {
 
 // Networking
 
-const mainIngress = new kubernetes.networking.v1beta1.Ingress("main", {
+const brightSubdomain = "bright.shihtzu.io";
+
+const subdomainZone = new aws.route53.Zone(brightSubdomain, {
+    name: brightSubdomain,
+    forceDestroy: true,
+});
+
+const mainIngress = new kubernetes.networking.v1beta1.Ingress(clusterName, {
     metadata: {
-        name: "main",
+        name: clusterName,
         annotations: {
             "kubernetes.io/ingress.class": "alb",
             "alb.ingress.kubernetes.io/scheme": "internet-facing",
             "alb.ingress.kubernetes.io/tags": `Environment=${clusterName}`,
+            "alb.ingress.kubernetes.io/listen-ports": `[{"HTTP": 80, "HTTPS": 443}]`,
+            "alb.ingress.kubernetes.io/certificate-arn": shihtzuCertArn,
+            "alb.ingress.kubernetes.io/actions.ssl-redirect": `{"Type": "redirect", "RedirectConfig": { "Protocol": "HTTPS", "Port": "443", "StatusCode": "HTTP_301"}}`
         }
     },
     spec: {
         rules: [
             {
-                host: "bright.shihtzu.io",
+                host: brightSubdomain,
                 http: {
                     paths: [
+                        {
+                            path: "/*",
+                            backend: {
+                                serviceName: "ssl-redirect",
+                                servicePort: "use-annotation"
+                            }
+                        },
                         {
                             path: "/*",
                             backend: {
