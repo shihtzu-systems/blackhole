@@ -255,6 +255,49 @@ const dnsRolePolicyAttach = new aws.iam.RolePolicyAttachment(dnsName, {
 
 export const kubeconfig = cluster.kubeconfig;
 
+
+// Shared Resources
+const redisName = `${clusterName}-redis`;
+
+const redisSecurityGroup = new awsx.ec2.SecurityGroup(redisName, {
+    vpc: vpc,
+});
+
+redisSecurityGroup.createIngressRule(redisName, {
+    location: {
+        cidrBlocks: [ vpc.vpc.cidrBlock ]
+    },
+    ports: new awsx.ec2.TcpPorts(6379),
+    description: "allow internal redis traffic",
+});
+
+redisSecurityGroup.createEgressRule(redisName, {
+    location: {
+        cidrBlocks: [ "0.0.0.0/0" ]
+    },
+    ports: new awsx.ec2.AllTraffic(),
+    description: "allow internet traffic",
+});
+
+const redisSubnetGroup = new aws.elasticache.SubnetGroup(redisName, {
+    subnetIds: vpc.privateSubnetIds
+});
+
+const cacheRedis = new aws.elasticache.Cluster(redisName, {
+    azMode: "single-az",
+    clusterId: redisName,
+    engine: "redis",
+    engineVersion: "5.0.5",
+    nodeType: "cache.t2.small",
+    numCacheNodes: 1,
+    securityGroupIds: [ redisSecurityGroup.id ],
+    subnetGroupName: redisSubnetGroup.name,
+    tags: {
+        "Name": redisName,
+        "kubernetes.io/cluster/blackhole": "owned"
+    }
+});
+
 // Cluster Foundation
 
 // AWS ALB Ingress Controller
@@ -358,7 +401,7 @@ const albDeployment = new kubernetes.apps.v1.Deployment(albName, {
 
                             // AWS VPC ID this ingress controller will use to create AWS resources.
                             // If unspecified, it will be discovered from ec2metadata.
-                            `--aws-vpc-id=${vpcId}`,
+                            vpcId.apply(v => `--aws-vpc-id=${v}`),
 
                             // AWS region this ingress controller will operate in.
                             // If unspecified, it will be discovered from ec2metadata.
@@ -465,7 +508,7 @@ const dnsDeployment = new kubernetes.apps.v1.Deployment(dnsName, {
                             "--registry=txt",
                             `--txt-owner-id=${clusterName}`
                         ],
-                    }
+                    },
                 ],
                 securityContext: {
                     fsGroup: 65534
