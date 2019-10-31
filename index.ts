@@ -4,14 +4,10 @@ import * as awsx from "@pulumi/awsx";
 import * as eks from "@pulumi/eks";
 import * as kubernetes from "@pulumi/kubernetes";
 
-
-const clusterName = "blackhole";
-const clusterDomain = "shihtzu.io";
-
-
 const config = new pulumi.Config();
-
-const shihtzuCertArn = config.require("shihtzu-cert-arn");
+const name = config.require("name");
+const domain = config.require("domain");
+const certArn = config.require("cert-arn");
 
 // AWS ALB Ingress Controller
 const albName = "alb-ingress-controller";
@@ -184,7 +180,7 @@ const dnsIamPolicy = new aws.iam.Policy(dnsName, {
 export const dnsIamPolicyArn = dnsIamPolicy.arn;
 
 // VPC
-const vpc = new awsx.ec2.Vpc(clusterName, {
+const vpc = new awsx.ec2.Vpc(name, {
     cidrBlock: "10.99.0.0/16",
     subnets: [
         {
@@ -207,7 +203,7 @@ const vpc = new awsx.ec2.Vpc(clusterName, {
     numberOfAvailabilityZones: 2,
     numberOfNatGateways: 1,
     tags: {
-        "Name": clusterName,
+        "Name": name,
         "kubernetes.io/cluster/blackhole": "owned"
     }
 });
@@ -216,7 +212,7 @@ export const vpcId = vpc.id;
 export const vpcPrivateSubnetIds = vpc.privateSubnetIds;
 export const vpcPublicSubnetIds = vpc.publicSubnetIds;
 
-const clusterRole = new aws.iam.Role(clusterName,{
+const clusterRole = new aws.iam.Role(name,{
     assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({
         Service: "ec2.amazonaws.com",
     })
@@ -225,7 +221,7 @@ const clusterRole = new aws.iam.Role(clusterName,{
 
 
 // Cluster
-const cluster = new eks.Cluster(clusterName, {
+const cluster = new eks.Cluster(name, {
     vpcId: vpcId,
     subnetIds: vpcPrivateSubnetIds,
     nodeAssociatePublicIpAddress: false,
@@ -261,7 +257,7 @@ export const kubeconfig = cluster.kubeconfig;
 
 
 // Shared Resources
-const redisName = `${clusterName}-redis`;
+const redisName = `${name}-redis`;
 
 const redisSecurityGroup = new awsx.ec2.SecurityGroup(redisName, {
     vpc: vpc,
@@ -401,7 +397,7 @@ const albDeployment = new kubernetes.apps.v1.Deployment(albName, {
                             // Name of your cluster. Used when naming resources created
                             // by the ALB Ingress Controller, providing distinction between
                             // clusters.
-                            `--cluster-name=${clusterName}`,
+                            `--cluster-name=${name}`,
 
                             // AWS VPC ID this ingress controller will use to create AWS resources.
                             // If unspecified, it will be discovered from ec2metadata.
@@ -503,14 +499,14 @@ const dnsDeployment = new kubernetes.apps.v1.Deployment(dnsName, {
                             "--source=service",
                             "--source=ingress",
                             // will make ExternalDNS see only the hosted zones matching provided domain, omit to process all available hosted zones
-                            `--domain-filter=${clusterDomain}`,
+                            `--domain-filter=${domain}`,
                             "--provider=aws",
                             // would prevent ExternalDNS from deleting any records, omit to enable full synchronization
                             "--policy=upsert-only",
                             // only look at public hosted zones (valid values are public, private or no value for both)
                             "--aws-zone-type=public",
                             "--registry=txt",
-                            `--txt-owner-id=${clusterName}`
+                            `--txt-owner-id=${name}`
                         ],
                     },
                 ],
@@ -524,30 +520,35 @@ const dnsDeployment = new kubernetes.apps.v1.Deployment(dnsName, {
 
 
 // Networking
+const mainDomain = `main.${domain}`;
+const yoloDomain = `yolo.${domain}`;
 
-const brightSubdomain = "bright.shihtzu.io";
-
-const subdomainZone = new aws.route53.Zone(brightSubdomain, {
-    name: brightSubdomain,
+const mainZone = new aws.route53.Zone(mainDomain, {
+    name: mainDomain,
     forceDestroy: true,
 });
 
-const mainIngress = new kubernetes.networking.v1beta1.Ingress(clusterName, {
+const yoloZone = new aws.route53.Zone(yoloDomain, {
+    name: yoloDomain,
+    forceDestroy: true,
+});
+
+const mainIngress = new kubernetes.networking.v1beta1.Ingress(name, {
     metadata: {
-        name: clusterName,
+        name: name,
         annotations: {
             "kubernetes.io/ingress.class": "alb",
             "alb.ingress.kubernetes.io/scheme": "internet-facing",
-            "alb.ingress.kubernetes.io/tags": `Environment=${clusterName}`,
+            "alb.ingress.kubernetes.io/tags": `Environment=${name}`,
             "alb.ingress.kubernetes.io/listen-ports": `[{"HTTP": 80, "HTTPS": 443}]`,
-            "alb.ingress.kubernetes.io/certificate-arn": shihtzuCertArn,
+            "alb.ingress.kubernetes.io/certificate-arn": certArn,
             "alb.ingress.kubernetes.io/actions.ssl-redirect": `{"Type": "redirect", "RedirectConfig": { "Protocol": "HTTPS", "Port": "443", "StatusCode": "HTTP_301"}}`
         }
     },
     spec: {
         rules: [
             {
-                host: brightSubdomain,
+                host: `bright.${domain}`,
                 http: {
                     paths: [
                         {
@@ -560,7 +561,49 @@ const mainIngress = new kubernetes.networking.v1beta1.Ingress(clusterName, {
                         {
                             path: "/*",
                             backend: {
-                                serviceName: "bright",
+                                serviceName: "bright-main",
+                                servicePort: "http"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                host: `bright.${mainDomain}`,
+                http: {
+                    paths: [
+                        {
+                            path: "/*",
+                            backend: {
+                                serviceName: "ssl-redirect",
+                                servicePort: "use-annotation"
+                            }
+                        },
+                        {
+                            path: "/*",
+                            backend: {
+                                serviceName: "bright-main",
+                                servicePort: "http"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                host: `bright.${yoloDomain}`,
+                http: {
+                    paths: [
+                        {
+                            path: "/*",
+                            backend: {
+                                serviceName: "ssl-redirect",
+                                servicePort: "use-annotation"
+                            }
+                        },
+                        {
+                            path: "/*",
+                            backend: {
+                                serviceName: "bright-yolo",
                                 servicePort: "http"
                             }
                         }

@@ -1,2 +1,5 @@
 config:
+  blackhole:cert-arn: arn:aws:acm:us-west-2:272944578466:certificate/45b3cc86-e81d-413b-877d-57c9ae4e4278
+  blackhole:domain: shihtzu.io
+  blackhole:name: blackhole
   blackhole:shihtzu-cert-arn: arn:aws:acm:us-west-2:272944578466:certificate/640167f3-b43a-41c6-8682-5b373ca0c65e
