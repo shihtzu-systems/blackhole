@@ -8,6 +8,7 @@ const config = new pulumi.Config();
 const name = config.require("name");
 const domain = config.require("domain");
 const certArn = config.require("cert-arn");
+const wordpressPassword = config.require("wordpress-password");
 
 // AWS ALB Ingress Controller
 const albName = "alb-ingress-controller";
@@ -533,6 +534,185 @@ const yoloZone = new aws.route53.Zone(yoloDomain, {
     forceDestroy: true,
 });
 
+
+// Stuff
+
+const wordpressName = "wordpress";
+const wordpressImage = "wordpress:4.8-apache";
+const wordpressLabels = {
+    "app.kubernetes.io/name": wordpressName
+};
+const wordpressMetadata = {
+    name: wordpressName,
+    labels: wordpressLabels
+};
+
+const wordpressPvc = new kubernetes.core.v1.PersistentVolumeClaim(wordpressName, {
+    metadata: wordpressMetadata,
+    spec: {
+        accessModes: [
+            "ReadWriteOnce"
+        ],
+        resources: {
+            requests: {
+                storage: "20Gi"
+            }
+        }
+    }
+});
+const wordpressDeployment = new kubernetes.apps.v1.Deployment(wordpressName, {
+    metadata: wordpressMetadata,
+    spec: {
+        selector: {
+            matchLabels: wordpressLabels,
+        },
+        strategy: {
+            type: "Recreate",
+        },
+        template: {
+            metadata: wordpressMetadata,
+            spec: {
+                containers: [
+                    {
+                        name: "main",
+                        image: wordpressImage,
+                        env: [
+                            {
+                                name: "WORDPRESS_DB_HOST",
+                                value: `${wordpressName}-mysql`
+                            },
+                            {
+                                name: "WORDPRESS_DB_PASSWORD",
+                                value: wordpressPassword,
+                            }
+                        ],
+                        ports: [
+                            {
+                                name: "http",
+                                containerPort: 80
+                            }
+                        ],
+                        volumeMounts: [
+                            {
+                                name: wordpressName,
+                                mountPath: "/var/www/html"
+                            }
+                        ]
+                    }
+                ],
+                volumes: [
+                    {
+                        name: wordpressName,
+                        persistentVolumeClaim: {
+                            claimName: wordpressName
+                        }
+                    }
+                ]
+            }
+        }
+    }
+});
+const wordpressService = new kubernetes.core.v1.Service(wordpressName, {
+    metadata: wordpressMetadata,
+    spec: {
+     type: "NodePort",
+        selector: wordpressLabels,
+        ports: [
+            {
+                name: "http",
+                port: 80
+            }
+        ]
+    }
+});
+
+
+const wordpressMysqlName = `${wordpressName}-mysql`;
+const wordpressMysqlImage = "mysql:5.6";
+const wordpressMysqlLabels = {
+    "app.kubernetes.io/name": wordpressMysqlName,
+};
+const wordpressMysqlMetadata = {
+    name: wordpressMysqlName,
+    labels: wordpressMysqlLabels
+};
+
+const wordpressMysqlPvc = new kubernetes.core.v1.PersistentVolumeClaim(wordpressMysqlName, {
+    metadata: wordpressMysqlMetadata,
+    spec: {
+        accessModes: [
+            "ReadWriteOnce"
+        ],
+        resources: {
+            requests: {
+                storage: "20Gi"
+            }
+        }
+    }
+});
+const wordpressMysqlDeployment = new kubernetes.apps.v1.Deployment(wordpressMysqlName, {
+    metadata: wordpressMysqlMetadata,
+    spec: {
+        selector: {
+            matchLabels: wordpressMysqlLabels,
+        },
+        strategy: {
+            type: "Recreate",
+        },
+        template: {
+            metadata: wordpressMysqlMetadata,
+            spec: {
+                containers: [
+                    {
+                        name: "main",
+                        image: wordpressMysqlImage,
+                        env: [
+                            {
+                                name: "MYSQL_ROOT_PASSWORD",
+                                value: wordpressPassword
+                            },
+                        ],
+                        ports: [
+                            {
+                                name: "mysql",
+                                containerPort: 3306
+                            }
+                        ],
+                        volumeMounts: [
+                            {
+                                name: wordpressMysqlName,
+                                mountPath: "/var/lib/mysql"
+                            }
+                        ]
+                    }
+                ],
+                volumes: [
+                    {
+                        name: wordpressMysqlName,
+                        persistentVolumeClaim: {
+                            claimName: wordpressMysqlName
+                        }
+                    }
+                ]
+            }
+        }
+    }
+});
+const wordpressMysqlService = new kubernetes.core.v1.Service(wordpressMysqlName, {
+    metadata: wordpressMysqlMetadata,
+    spec: {
+        selector: wordpressMysqlLabels,
+        clusterIP: "None",
+        ports: [
+            {
+                port: 3306
+            }
+        ]
+    }
+});
+
+// Common
+
 const mainIngress = new kubernetes.networking.v1beta1.Ingress(name, {
     metadata: {
         name: name,
@@ -547,6 +727,48 @@ const mainIngress = new kubernetes.networking.v1beta1.Ingress(name, {
     },
     spec: {
         rules: [
+            {
+                host: "shihtzu.io",
+                http: {
+                    paths: [
+                        {
+                            path: "/*",
+                            backend: {
+                                serviceName: "ssl-redirect",
+                                servicePort: "use-annotation"
+                            }
+                        },
+                        {
+                            path: "/*",
+                            backend: {
+                                serviceName: "shihtzu-io",
+                                servicePort: "http"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                host: "wp.shihtzu.io",
+                http: {
+                    paths: [
+                        {
+                            path: "/*",
+                            backend: {
+                                serviceName: "ssl-redirect",
+                                servicePort: "use-annotation"
+                            }
+                        },
+                        {
+                            path: "/*",
+                            backend: {
+                                serviceName: "wordpress",
+                                servicePort: "http"
+                            }
+                        }
+                    ]
+                }
+            },
             {
                 host: `bright.${domain}`,
                 http: {
