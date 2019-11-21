@@ -1,7 +1,6 @@
 config:
-  blackhole:cert-arn: arn:aws:acm:us-west-2:272944578466:certificate/45b3cc86-e81d-413b-877d-57c9ae4e4278
+  blackhole:dev-domain: shihtzu.dev
   blackhole:domain: shihtzu.io
   blackhole:name: blackhole
-  blackhole:shihtzu-cert-arn: arn:aws:acm:us-west-2:272944578466:certificate/640167f3-b43a-41c6-8682-5b373ca0c65e
   blackhole:wordpress-password:
     secure: AAABAFAXPEtEihJ+9HRfxs+IouqkL+rIKCVrfjR6NrL1JEt+VF2o9+/eL9liPsBUNCJ9Qwv7l9wDJMukAwopffG0laTHLWaz1ZfdgAgoYUK5d/9fsofe9YewW/sPEY8X

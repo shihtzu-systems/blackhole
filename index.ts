@@ -7,7 +7,7 @@ import * as kubernetes from "@pulumi/kubernetes";
 const config = new pulumi.Config();
 const name = config.require("name");
 const domain = config.require("domain");
-const certArn = config.require("cert-arn");
+const devDomain = config.require("dev-domain");
 const wordpressPassword = config.require("wordpress-password");
 
 // AWS ALB Ingress Controller
@@ -499,11 +499,9 @@ const dnsDeployment = new kubernetes.apps.v1.Deployment(dnsName, {
                         args: [
                             "--source=service",
                             "--source=ingress",
-                            // will make ExternalDNS see only the hosted zones matching provided domain, omit to process all available hosted zones
-                            `--domain-filter=${domain}`,
                             "--provider=aws",
                             // would prevent ExternalDNS from deleting any records, omit to enable full synchronization
-                            "--policy=upsert-only",
+                            //"--policy=upsert-only",
                             // only look at public hosted zones (valid values are public, private or no value for both)
                             "--aws-zone-type=public",
                             "--registry=txt",
@@ -520,197 +518,6 @@ const dnsDeployment = new kubernetes.apps.v1.Deployment(dnsName, {
 }, {provider: cluster.provider});
 
 
-// Networking
-const mainDomain = `main.${domain}`;
-const yoloDomain = `yolo.${domain}`;
-
-const mainZone = new aws.route53.Zone(mainDomain, {
-    name: mainDomain,
-    forceDestroy: true,
-});
-
-const yoloZone = new aws.route53.Zone(yoloDomain, {
-    name: yoloDomain,
-    forceDestroy: true,
-});
-
-
-// Stuff
-
-const wordpressName = "wordpress";
-const wordpressImage = "wordpress:4.8-apache";
-const wordpressLabels = {
-    "app.kubernetes.io/name": wordpressName
-};
-const wordpressMetadata = {
-    name: wordpressName,
-    labels: wordpressLabels
-};
-
-const wordpressPvc = new kubernetes.core.v1.PersistentVolumeClaim(wordpressName, {
-    metadata: wordpressMetadata,
-    spec: {
-        accessModes: [
-            "ReadWriteOnce"
-        ],
-        resources: {
-            requests: {
-                storage: "20Gi"
-            }
-        }
-    }
-});
-const wordpressDeployment = new kubernetes.apps.v1.Deployment(wordpressName, {
-    metadata: wordpressMetadata,
-    spec: {
-        selector: {
-            matchLabels: wordpressLabels,
-        },
-        strategy: {
-            type: "Recreate",
-        },
-        template: {
-            metadata: wordpressMetadata,
-            spec: {
-                containers: [
-                    {
-                        name: "main",
-                        image: wordpressImage,
-                        env: [
-                            {
-                                name: "WORDPRESS_DB_HOST",
-                                value: `${wordpressName}-mysql`
-                            },
-                            {
-                                name: "WORDPRESS_DB_PASSWORD",
-                                value: wordpressPassword,
-                            }
-                        ],
-                        ports: [
-                            {
-                                name: "http",
-                                containerPort: 80
-                            }
-                        ],
-                        volumeMounts: [
-                            {
-                                name: wordpressName,
-                                mountPath: "/var/www/html"
-                            }
-                        ]
-                    }
-                ],
-                volumes: [
-                    {
-                        name: wordpressName,
-                        persistentVolumeClaim: {
-                            claimName: wordpressName
-                        }
-                    }
-                ]
-            }
-        }
-    }
-});
-const wordpressService = new kubernetes.core.v1.Service(wordpressName, {
-    metadata: wordpressMetadata,
-    spec: {
-     type: "NodePort",
-        selector: wordpressLabels,
-        ports: [
-            {
-                name: "http",
-                port: 80
-            }
-        ]
-    }
-});
-
-
-const wordpressMysqlName = `${wordpressName}-mysql`;
-const wordpressMysqlImage = "mysql:5.6";
-const wordpressMysqlLabels = {
-    "app.kubernetes.io/name": wordpressMysqlName,
-};
-const wordpressMysqlMetadata = {
-    name: wordpressMysqlName,
-    labels: wordpressMysqlLabels
-};
-
-const wordpressMysqlPvc = new kubernetes.core.v1.PersistentVolumeClaim(wordpressMysqlName, {
-    metadata: wordpressMysqlMetadata,
-    spec: {
-        accessModes: [
-            "ReadWriteOnce"
-        ],
-        resources: {
-            requests: {
-                storage: "20Gi"
-            }
-        }
-    }
-});
-const wordpressMysqlDeployment = new kubernetes.apps.v1.Deployment(wordpressMysqlName, {
-    metadata: wordpressMysqlMetadata,
-    spec: {
-        selector: {
-            matchLabels: wordpressMysqlLabels,
-        },
-        strategy: {
-            type: "Recreate",
-        },
-        template: {
-            metadata: wordpressMysqlMetadata,
-            spec: {
-                containers: [
-                    {
-                        name: "main",
-                        image: wordpressMysqlImage,
-                        env: [
-                            {
-                                name: "MYSQL_ROOT_PASSWORD",
-                                value: wordpressPassword
-                            },
-                        ],
-                        ports: [
-                            {
-                                name: "mysql",
-                                containerPort: 3306
-                            }
-                        ],
-                        volumeMounts: [
-                            {
-                                name: wordpressMysqlName,
-                                mountPath: "/var/lib/mysql"
-                            }
-                        ]
-                    }
-                ],
-                volumes: [
-                    {
-                        name: wordpressMysqlName,
-                        persistentVolumeClaim: {
-                            claimName: wordpressMysqlName
-                        }
-                    }
-                ]
-            }
-        }
-    }
-});
-const wordpressMysqlService = new kubernetes.core.v1.Service(wordpressMysqlName, {
-    metadata: wordpressMysqlMetadata,
-    spec: {
-        selector: wordpressMysqlLabels,
-        clusterIP: "None",
-        ports: [
-            {
-                port: 3306
-            }
-        ]
-    }
-});
-
 // Common
 
 const mainIngress = new kubernetes.networking.v1beta1.Ingress(name, {
@@ -721,7 +528,6 @@ const mainIngress = new kubernetes.networking.v1beta1.Ingress(name, {
             "alb.ingress.kubernetes.io/scheme": "internet-facing",
             "alb.ingress.kubernetes.io/tags": `Environment=${name}`,
             "alb.ingress.kubernetes.io/listen-ports": `[{"HTTP": 80, "HTTPS": 443}]`,
-            "alb.ingress.kubernetes.io/certificate-arn": certArn,
             "alb.ingress.kubernetes.io/actions.ssl-redirect": `{"Type": "redirect", "RedirectConfig": { "Protocol": "HTTPS", "Port": "443", "StatusCode": "HTTP_301"}}`
         }
     },
@@ -749,27 +555,6 @@ const mainIngress = new kubernetes.networking.v1beta1.Ingress(name, {
                 }
             },
             {
-                host: "wp.shihtzu.io",
-                http: {
-                    paths: [
-                        {
-                            path: "/*",
-                            backend: {
-                                serviceName: "ssl-redirect",
-                                servicePort: "use-annotation"
-                            }
-                        },
-                        {
-                            path: "/*",
-                            backend: {
-                                serviceName: "wordpress",
-                                servicePort: "http"
-                            }
-                        }
-                    ]
-                }
-            },
-            {
                 host: `bright.${domain}`,
                 http: {
                     paths: [
@@ -781,17 +566,59 @@ const mainIngress = new kubernetes.networking.v1beta1.Ingress(name, {
                             }
                         },
                         {
-                            path: "/*",
+                            path: "/static/*",
                             backend: {
                                 serviceName: "bright-main",
                                 servicePort: "http"
                             }
-                        }
+                        },
+                        {
+                            path: "/",
+                            backend: {
+                                serviceName: "bright-main",
+                                servicePort: "http"
+                            }
+                        },
+                        {
+                            path: "/err*",
+                            backend: {
+                                serviceName: "bright-main",
+                                servicePort: "http"
+                            }
+                        },
+                        {
+                            path: "/auth*",
+                            backend: {
+                                serviceName: "bright-main",
+                                servicePort: "http"
+                            }
+                        },
+                        {
+                            path: "/callback*",
+                            backend: {
+                                serviceName: "bright-main",
+                                servicePort: "http"
+                            }
+                        },
+                        {
+                            path: "/bnet*",
+                            backend: {
+                                serviceName: "bright-main",
+                                servicePort: "http"
+                            }
+                        },
+                        {
+                            path: "/try*",
+                            backend: {
+                                serviceName: "bright-main",
+                                servicePort: "http"
+                            }
+                        },
                     ]
                 }
             },
             {
-                host: `bright.${mainDomain}`,
+                host: "bright.pub",
                 http: {
                     paths: [
                         {
@@ -802,36 +629,102 @@ const mainIngress = new kubernetes.networking.v1beta1.Ingress(name, {
                             }
                         },
                         {
-                            path: "/*",
+                            path: "/static/*",
                             backend: {
-                                serviceName: "bright-main",
+                                serviceName: "bright-live",
                                 servicePort: "http"
-                            }
-                        }
-                    ]
-                }
-            },
-            {
-                host: `bright.${yoloDomain}`,
-                http: {
-                    paths: [
-                        {
-                            path: "/*",
-                            backend: {
-                                serviceName: "ssl-redirect",
-                                servicePort: "use-annotation"
                             }
                         },
                         {
-                            path: "/*",
+                            path: "/",
                             backend: {
-                                serviceName: "bright-yolo",
+                                serviceName: "bright-live",
                                 servicePort: "http"
                             }
-                        }
+                        },
+                        {
+                            path: "/err*",
+                            backend: {
+                                serviceName: "bright-live",
+                                servicePort: "http"
+                            }
+                        },
+                        {
+                            path: "/auth*",
+                            backend: {
+                                serviceName: "bright-live",
+                                servicePort: "http"
+                            }
+                        },
+                        {
+                            path: "/callback*",
+                            backend: {
+                                serviceName: "bright-live",
+                                servicePort: "http"
+                            }
+                        },
+                        {
+                            path: "/bnet*",
+                            backend: {
+                                serviceName: "bright-live",
+                                servicePort: "http"
+                            }
+                        },
+                        {
+                            path: "/try*",
+                            backend: {
+                                serviceName: "bright-live",
+                                servicePort: "http"
+                            }
+                        },
                     ]
                 }
-            },
+            }
         ]
     }
 });
+
+// redis commander
+const redisCommanderName = "redis-commander";
+const redisCommanderImage = "rediscommander/redis-commander";
+const redisCommanderLabels = {
+    "app.kubernetes.io/name": redisCommanderName
+};
+const redisCommanderMetadata = {
+    name: redisCommanderName,
+    labels: redisCommanderLabels
+};
+
+const redisCommanderDeployment = new kubernetes.apps.v1.Deployment(redisCommanderName, {
+    metadata: redisCommanderMetadata,
+    spec: {
+        selector: {
+            matchLabels: redisCommanderLabels
+        },
+        template: {
+            metadata: {
+                labels: redisCommanderLabels
+            },
+            spec: {
+                containers: [
+                    {
+                        name: redisCommanderName,
+                        image: redisCommanderImage,
+                        env: [
+                            {
+                                name: "REDIS_HOSTS",
+                                value: cacheRedis.clusterAddress,
+                            }
+                        ],
+                        ports: [
+                            {
+                                name: redisCommanderName,
+                                containerPort: 8081,
+                            }
+                        ]
+                    },
+                ],
+            }
+        }
+    }
+}, {provider: cluster.provider});
